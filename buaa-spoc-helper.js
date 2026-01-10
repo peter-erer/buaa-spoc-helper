@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         智学北航学习助手
 // @namespace    http://tampermonkey.net/
-// @version      3.9
+// @version      4.0
 // @description  一键导出PPT/语音识别字幕SRT或时间戳笔记TXT
 // @author       Peter Sheild
 // @match        *://*.classroom.msa.buaa.edu.cn/livingroom*
