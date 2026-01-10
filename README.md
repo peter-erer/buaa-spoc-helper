@@ -3,6 +3,7 @@
 [![Greasy Fork Downloads](https://img.shields.io/greasyfork/dt/562098?label=Downloads&color=blue)](https://greasyfork.org/zh-CN/scripts/562098)
 [![Greasy Fork Version](https://img.shields.io/greasyfork/v/562098?label=Version&color=green)](https://greasyfork.org/zh-CN/scripts/562098)
 ![License](https://img.shields.io/github/license/peter-erer/buaa-spoc-helper?label=License)
+
 专为北航学子打造的课程学习增强工具。一键导出“智学北航”课程回放的字幕与 PPT 讲义，支持智能笔记整理与完美打印排版。
 
 ## ✨ 核心功能
@@ -17,7 +18,7 @@
 ## 🚀 安装方法
 
 1.  安装浏览器扩展 [Tampermonkey (油猴)](https://www.tampermonkey.net/)。
-2.  前往 [Greasy Fork] (https://greasyfork.org/zh-CN/scripts/562098) 点击安装脚本。
+2.  前往 [Greasy Fork](https://greasyfork.org/zh-CN/scripts/562098) 点击安装脚本。
 3.  或者直接在 GitHub 点击 `raw` 文件安装。
 
 ## 📖 使用指南
