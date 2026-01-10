@@ -246,7 +246,7 @@
                     <h1>${document.title}</h1>
                     <p>课程讲义 | 生成时间: ${new Date().toLocaleDateString()}</p>
                     <p class="no-print" style="color:red; font-size:12px; margin-top:5px;">
-                        💡 提示：请在打印设置中手动选择 <b>“横向”</b>，并勾选 <b>“背景图形”</b>。
+                        💡 提示：推荐打印设置中手动选择 <b>“横向”</b>。
                     </p>
                 </div>
         `;
