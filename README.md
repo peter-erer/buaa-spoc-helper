@@ -1,7 +1,5 @@
-# 🎓 智学北航学习助手 (Smart Beihang Learning Assistant)
+# 🎓 智学北航学习助手 (BUAA-Spoc Learning Assistant)
 
-![Version](https://img.shields.io/badge/version-4.0-blue)
-![License](https://img.shields.io/badge/license-MIT-green)
 [![Greasy Fork Downloads](https://img.shields.io/greasyfork/dt/562098?label=Downloads&color=blue)](https://greasyfork.org/zh-CN/scripts/562098)
 [![Greasy Fork Version](https://img.shields.io/greasyfork/v/562098?label=Version&color=green)](https://greasyfork.org/zh-CN/scripts/562098)
 ![License](https://img.shields.io/github/license/peter-erer/buaa-spoc-helper?label=License)
