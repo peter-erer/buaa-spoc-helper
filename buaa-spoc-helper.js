@@ -81,7 +81,8 @@
       if (pathname.includes("/coursedetail")) return "coursedetail";
     }
     if (hostname === "spoc.buaa.edu.cn") {
-      return "spoc";
+      if (pathname.includes("/spocnew/mycourse/coursecenter/")) return "spoc";
+      return "unsupported";
     }
     return "unsupported";
   }

@@ -161,6 +161,16 @@
 - `autoplay.js`：历史参考脚本
 - `msa-download.js`：历史参考脚本
 
+
+## FAQ
+
+1. 没有出现悬浮窗怎么回事？
+
+检查是否安装了对应浏览器版本的油猴插件以及权限有没有给足（详见截图紫框）
+
+![5](./imgs/img5.png)
+![6](./imgs/img6.png)
+
 ## License
 
 本项目基于 [MIT License](./LICENSE) 开源。
