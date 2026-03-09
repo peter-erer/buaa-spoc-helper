@@ -1,9 +1,5 @@
 # 智学北航学习助手
 
-原仓库：<https://github.com/peter-erer/buaa-spoc-helper> 感谢！
-
-仓库地址：<https://github.com/Micraow/buaa-spoc-helper>
-
 一个合并后的单 userscript，覆盖以下页面场景：
 
 - `classroom.msa.buaa.edu.cn/livingroom*`

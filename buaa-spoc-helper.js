@@ -1,15 +1,15 @@
 // ==UserScript==
 // @name         智学北航学习助手
-// @namespace    https://github.com/Micraow/buaa-spoc-helper
+// @namespace    https://github.com/peter-erer/buaa-spoc-helper
 // @version      5.0.0
 // @description  支持 MSA 回放字幕/PPT 导出、课程详情视频/PPTX 下载，以及 SPOC 播放器辅助工具
-// @author       micraow(github.com/micraow)
+// @author       micraow(github.com/micraow),Peter-erer(github.com/peter-erer)
 // @license      MIT
 // @match        *://*.classroom.msa.buaa.edu.cn/livingroom*
 // @match        *://*.classroom.msa.buaa.edu.cn/coursedetail*
 // @match        *://spoc.buaa.edu.cn/*
-// @homepageURL  https://github.com/Micraow/buaa-spoc-helper
-// @supportURL   https://github.com/Micraow/buaa-spoc-helper
+// @homepageURL  https://github.com/peter-erer/buaa-spoc-helper
+// @supportURL   https://github.com/peter-erer/buaa-spoc-helper
 // @icon         https://www.google.com/s2/favicons?sz=64&domain=buaa.edu.cn
 // @require      https://cdn.jsdelivr.net/npm/pptxgenjs@3.9.0/dist/pptxgen.bundle.js
 // @grant        none
