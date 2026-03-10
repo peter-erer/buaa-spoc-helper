@@ -49,6 +49,20 @@
       logs: [],
       autoNextEnabled: false,
       preferredRate: 1.5,
+      interceptorInstalled: false,
+      isRunning: false,
+      fastMode: false,
+      simSpeed: 10,
+      simInterval: 1,
+      simDuration: 0,
+      simProgress: 0,
+      simPlayTime: 0,
+      simTickBusy: false,
+      simStatusText: "",
+      simInfoText: "",
+      timer: null,
+      params: null,
+      capturedHeaders: {},
       currentVideo: null,
       currentDuration: 0,
       currentSrc: "",
@@ -1737,22 +1751,372 @@
     }, 500);
   }
 
+  function installSpocRequestInterceptor() {
+    if (state.spoc.interceptorInstalled) return;
+    state.spoc.interceptorInstalled = true;
+
+    const originalOpen = XMLHttpRequest.prototype.open;
+    const originalSend = XMLHttpRequest.prototype.send;
+    const originalSetRequestHeader = XMLHttpRequest.prototype.setRequestHeader;
+
+    XMLHttpRequest.prototype.open = function (method, url, ...rest) {
+      this.__bshSpocUrl = String(url || "");
+      this.__bshSpocHeaders = {};
+      return originalOpen.apply(this, [method, url, ...rest]);
+    };
+
+    XMLHttpRequest.prototype.setRequestHeader = function (name, value) {
+      if (!this.__bshSpocHeaders) {
+        this.__bshSpocHeaders = {};
+      }
+      this.__bshSpocHeaders[String(name || "")] = String(value || "");
+      return originalSetRequestHeader.apply(this, [name, value]);
+    };
+
+    XMLHttpRequest.prototype.send = function (body) {
+      const url = String(this.__bshSpocUrl || "");
+      if (url.includes("addKcnrSfydNew")) {
+        const params = parseSpocProgressRequestBody(body);
+        if (params) {
+          Promise.resolve(handleSpocCapturedRequest(params, this.__bshSpocHeaders || {})).catch(
+            (error) => console.error(error)
+          );
+        } else {
+          pushSpocLog("检测到 addKcnrSfydNew 请求，但参数解析失败。", "warning");
+        }
+      }
+      return originalSend.apply(this, [body]);
+    };
+
+    pushSpocLog("SPOC 请求拦截已启用。", "success");
+  }
+
+  function parseSpocProgressRequestBody(body) {
+    if (typeof body !== "string") return null;
+    try {
+      const payload = JSON.parse(body);
+      const params = {
+        kcnrid: payload?.kcnrid,
+        kcid: payload?.kcid,
+        ssmlid: payload?.ssmlid,
+      };
+      if (!params.kcnrid || !params.kcid || !params.ssmlid) return null;
+      return params;
+    } catch (error) {
+      return null;
+    }
+  }
+
+  function getSpocHeaderValue(name) {
+    const lowerName = String(name || "").toLowerCase();
+    const headers = state.spoc.capturedHeaders || {};
+    const matchedKey = Object.keys(headers).find((key) => key.toLowerCase() === lowerName);
+    return matchedKey ? String(headers[matchedKey] || "") : "";
+  }
+
+  async function handleSpocCapturedRequest(params, headers) {
+    const prev = state.spoc.params;
+    const changed =
+      !prev ||
+      prev.kcnrid !== params.kcnrid ||
+      prev.kcid !== params.kcid ||
+      prev.ssmlid !== params.ssmlid;
+
+    state.spoc.params = {
+      kcnrid: params.kcnrid,
+      kcid: params.kcid,
+      ssmlid: params.ssmlid,
+    };
+    state.spoc.capturedHeaders = {
+      ...state.spoc.capturedHeaders,
+      ...(headers || {}),
+    };
+
+    if (state.spoc.isRunning) {
+      stopSpocSimulation("检测到新资源，已停止当前任务。");
+    }
+
+    if (changed) {
+      pushSpocLog(`已捕获参数：KCID=${params.kcid}, KCNRID=${params.kcnrid}。`, "success");
+    }
+
+    const video = findBestVideoElement();
+    const duration = await detectVideoDuration(video);
+    if (duration > 0) {
+      state.spoc.simDuration = duration;
+      if (state.spoc.ui?.simDurationInput) {
+        const current = Number(state.spoc.ui.simDurationInput.value || 0);
+        if (!Number.isFinite(current) || current <= 0) {
+          state.spoc.ui.simDurationInput.value = String(duration);
+        }
+      }
+      pushSpocLog(`自动识别视频时长：${duration} 秒。`, "info");
+    } else {
+      pushSpocLog("未能自动识别时长，请手动填写。", "warning");
+    }
+
+    renderSpocUi();
+  }
+
+  function readSpocNumberInput(input, fallback, min, max) {
+    const raw = Number(input?.value);
+    let value = Number.isFinite(raw) ? raw : fallback;
+    if (Number.isFinite(min)) value = Math.max(min, value);
+    if (Number.isFinite(max)) value = Math.min(max, value);
+    return value;
+  }
+
+  function syncSpocAutomationConfigFromUi() {
+    const ui = state.spoc.ui;
+    if (!ui) return;
+
+    state.spoc.simSpeed = readSpocNumberInput(ui.simSpeedInput, state.spoc.simSpeed || 10, 0.25, 100);
+    state.spoc.simInterval = readSpocNumberInput(ui.simIntervalInput, state.spoc.simInterval || 1, 0.5, 30);
+    state.spoc.simDuration = readSpocNumberInput(ui.simDurationInput, state.spoc.simDuration || 0, 0, 43200);
+    state.spoc.fastMode = Boolean(ui.fastModeInput?.checked);
+
+    ui.simSpeedInput.value = String(state.spoc.simSpeed);
+    ui.simIntervalInput.value = String(state.spoc.simInterval);
+    if (state.spoc.simDuration > 0) {
+      ui.simDurationInput.value = String(Math.floor(state.spoc.simDuration));
+    }
+  }
+
+  function clearSpocSimulationTimer() {
+    if (state.spoc.timer) {
+      clearInterval(state.spoc.timer);
+      state.spoc.timer = null;
+    }
+  }
+
+  function stopSpocSimulation(statusText = "已停止。") {
+    const wasRunning = state.spoc.isRunning;
+    clearSpocSimulationTimer();
+    state.spoc.isRunning = false;
+    state.spoc.simTickBusy = false;
+    state.spoc.simStatusText = statusText;
+    if (wasRunning) {
+      pushSpocLog(statusText, "info");
+    }
+    renderSpocUi();
+  }
+
+  function getSpocEffectiveDuration() {
+    if (Number.isFinite(state.spoc.simDuration) && state.spoc.simDuration > 0) {
+      return Math.floor(state.spoc.simDuration);
+    }
+    if (Number.isFinite(state.spoc.currentDuration) && state.spoc.currentDuration > 0) {
+      return Math.floor(state.spoc.currentDuration);
+    }
+    return 0;
+  }
+
+  async function sendSpocApiRequest(endpoint, data) {
+    return new Promise((resolve) => {
+      const xhr = new XMLHttpRequest();
+      xhr.open("POST", `https://spoc.buaa.edu.cn/spocnewht${endpoint}`, true);
+      xhr.withCredentials = true;
+
+      xhr.setRequestHeader("Content-Type", "application/json;charset=UTF-8");
+      xhr.setRequestHeader("Accept", "application/json, text/plain, */*");
+
+      const token = getSpocHeaderValue("Token");
+      const roleCode = getSpocHeaderValue("RoleCode");
+      const xRequestedWith = getSpocHeaderValue("X-Requested-With");
+      const authorization = getSpocHeaderValue("Authorization");
+
+      if (token) xhr.setRequestHeader("Token", token);
+      if (roleCode) xhr.setRequestHeader("RoleCode", roleCode);
+      if (xRequestedWith) xhr.setRequestHeader("X-Requested-With", xRequestedWith);
+      if (authorization) xhr.setRequestHeader("Authorization", authorization);
+
+      xhr.onreadystatechange = () => {
+        if (xhr.readyState !== 4) return;
+        resolve(xhr.status >= 200 && xhr.status < 300);
+      };
+
+      xhr.onerror = () => resolve(false);
+      xhr.send(JSON.stringify(data || {}));
+    });
+  }
+
+  async function addSpocStudyHeartbeat() {
+    if (!state.spoc.params) return false;
+    return sendSpocApiRequest("/kcnr/addNrydjlb", {
+      kcnrid: state.spoc.params.kcnrid,
+      kcid: state.spoc.params.kcid,
+      nrlx: "99",
+    });
+  }
+
+  async function updateSpocProgress(progress, playTime) {
+    if (!state.spoc.params) return false;
+    return sendSpocApiRequest("/kcnr/updKcnrSfydNew", {
+      bfjd: progress,
+      kcnrid: state.spoc.params.kcnrid,
+      kcid: state.spoc.params.kcid,
+      sfyd: progress >= 100 ? "1" : "0",
+      bfsj: Math.floor(playTime),
+      ssmlid: state.spoc.params.ssmlid,
+    });
+  }
+
+  async function runSpocFastComplete(duration) {
+    state.spoc.isRunning = true;
+    state.spoc.simTickBusy = true;
+    state.spoc.simPlayTime = 0;
+    state.spoc.simProgress = 0;
+    state.spoc.simDuration = duration;
+    state.spoc.simStatusText = "正在执行一键完成...";
+    state.spoc.simInfoText = "一键完成会直接将进度上报为 100%。";
+    renderSpocUi();
+
+    pushSpocLog("开始执行一键完成。", "warning");
+    await addSpocStudyHeartbeat();
+    const success = await updateSpocProgress(100, duration);
+
+    state.spoc.simTickBusy = false;
+    state.spoc.isRunning = false;
+
+    if (success) {
+      state.spoc.simProgress = 100;
+      state.spoc.simPlayTime = duration;
+      state.spoc.simStatusText = "一键完成执行成功。";
+      state.spoc.simInfoText = "当前资源已标记为完成。";
+      pushSpocLog("一键完成成功。", "success");
+    } else {
+      state.spoc.simStatusText = "一键完成执行失败。";
+      state.spoc.simInfoText = "请重新捕获参数后重试。";
+      pushSpocLog("一键完成请求失败。", "error");
+    }
+    renderSpocUi();
+  }
+
+  async function startSpocSimulation() {
+    if (state.spoc.isRunning) {
+      pushSpocLog("已有任务在运行。", "warning");
+      return;
+    }
+
+    syncSpocAutomationConfigFromUi();
+
+    if (!state.spoc.params) {
+      state.spoc.simStatusText = "参数未就绪。";
+      state.spoc.simInfoText = "请先点击资源“查看”以捕获请求参数。";
+      renderSpocUi();
+      pushSpocLog("缺少参数，请先打开一个资源。", "warning");
+      return;
+    }
+
+    if (!getSpocHeaderValue("Token")) {
+      state.spoc.simStatusText = "认证头未捕获。";
+      state.spoc.simInfoText = "请重新点击“查看”以捕获 Token。";
+      renderSpocUi();
+      pushSpocLog("缺少 Token 请求头。", "error");
+      return;
+    }
+
+    const duration = getSpocEffectiveDuration();
+    if (!duration) {
+      state.spoc.simStatusText = "时长无效。";
+      state.spoc.simInfoText = "请手动填写时长或先加载视频元数据。";
+      renderSpocUi();
+      pushSpocLog("视频时长无效。", "warning");
+      return;
+    }
+
+    state.spoc.simDuration = duration;
+    if (state.spoc.fastMode) {
+      await runSpocFastComplete(duration);
+      return;
+    }
+
+    state.spoc.isRunning = true;
+    state.spoc.simTickBusy = false;
+    state.spoc.simPlayTime = 0;
+    state.spoc.simProgress = 0;
+    state.spoc.simStatusText = "正在模拟上报进度...";
+    state.spoc.simInfoText = `速度 ${state.spoc.simSpeed}x | 心跳 ${state.spoc.simInterval}s`;
+    renderSpocUi();
+
+    pushSpocLog(
+      `模拟开始：时长 ${duration}s，速度 ${state.spoc.simSpeed}x，心跳 ${state.spoc.simInterval}s。`,
+      "success"
+    );
+
+    const heartbeatOk = await addSpocStudyHeartbeat();
+    if (!heartbeatOk) {
+      pushSpocLog("创建学习记录失败，将继续尝试上报进度。", "warning");
+    }
+
+    clearSpocSimulationTimer();
+    const tickMs = Math.max(250, Math.floor(state.spoc.simInterval * 1000));
+    state.spoc.timer = window.setInterval(async () => {
+      if (!state.spoc.isRunning || state.spoc.simTickBusy) return;
+      state.spoc.simTickBusy = true;
+
+      try {
+        const nextPlayTime = Math.min(
+          state.spoc.simDuration,
+          state.spoc.simPlayTime + state.spoc.simInterval * state.spoc.simSpeed
+        );
+        const nextProgress = Math.min(
+          100,
+          Math.floor((nextPlayTime / Math.max(1, state.spoc.simDuration)) * 100)
+        );
+
+        const ok = await updateSpocProgress(nextProgress, nextPlayTime);
+        if (!ok) {
+          stopSpocSimulation("进度上报失败，任务已停止。");
+          return;
+        }
+
+        state.spoc.simPlayTime = nextPlayTime;
+        state.spoc.simProgress = nextProgress;
+
+        const remain = Math.max(0, (state.spoc.simDuration - nextPlayTime) / Math.max(0.01, state.spoc.simSpeed));
+        const mins = Math.floor(remain / 60);
+        const secs = Math.floor(remain % 60)
+          .toString()
+          .padStart(2, "0");
+        state.spoc.simInfoText = `剩余约 ${mins}:${secs} | ${state.spoc.simSpeed}x | ${state.spoc.simInterval}s`;
+
+        if (nextProgress >= 100) {
+          clearSpocSimulationTimer();
+          state.spoc.isRunning = false;
+          state.spoc.simStatusText = "模拟上报完成。";
+          state.spoc.simInfoText = "当前资源已标记为完成。";
+          pushSpocLog("模拟任务完成。", "success");
+        }
+        renderSpocUi();
+      } catch (error) {
+        console.error(error);
+        stopSpocSimulation("出现异常，任务已停止。");
+      } finally {
+        state.spoc.simTickBusy = false;
+      }
+    }, tickMs);
+  }
+
   function initSpocHelper() {
     const shell = createPanelShell(
       "bsh-spoc-panel",
       "SPOC 播放辅助",
       "状态、倍速、自动下一节与视频链接工具"
     );
-
     shell.body.innerHTML = `
       <div class="bsh-section">
         <div class="bsh-badges">
           <span class="bsh-badge" data-role="video-badge">播放器未就绪</span>
           <span class="bsh-badge" data-role="auto-next-badge">自动下一节关闭</span>
+          <span class="bsh-badge" data-role="automation-badge">自动上报未就绪</span>
         </div>
       </div>
       <div class="bsh-section">
         <div class="bsh-card bsh-card--status" data-role="status">正在检测当前页面中的视频播放器。</div>
+        <div class="bsh-card bsh-card--status" style="margin-top: 8px;" data-role="sim-info">
+          请先点击一次资源“查看”，捕获参数和认证头后再开始自动上报。
+        </div>
       </div>
       <div class="bsh-section">
         <div class="bsh-progress">
@@ -1784,6 +2148,29 @@
             <input type="number" class="bsh-input" min="0.25" max="16" step="0.25" value="1.5" data-role="rate-input">
             <button type="button" class="bsh-btn" data-action="apply-rate">应用倍速</button>
             <button type="button" class="bsh-btn bsh-btn--ghost" data-action="refresh">刷新检测</button>
+          </div>
+        </div>
+      </div>
+      <div class="bsh-section">
+        <div class="bsh-card">
+          <div style="font-size: 11px; color: var(--bsh-text-muted);">自动上报配置</div>
+          <div class="bsh-field-row" style="margin-top: 10px;">
+            <input type="number" class="bsh-input" min="1" max="43200" step="1" value="" style="width: 84px;" data-role="sim-duration">
+            <span style="font-size: 11px; color: var(--bsh-text-muted);">时长(秒)</span>
+          </div>
+          <div class="bsh-field-row" style="margin-top: 8px;">
+            <input type="number" class="bsh-input" min="0.25" max="100" step="0.25" value="10" style="width: 72px;" data-role="sim-speed">
+            <span style="font-size: 11px; color: var(--bsh-text-muted);">速度(x)</span>
+            <input type="number" class="bsh-input" min="0.5" max="30" step="0.5" value="1" style="width: 72px;" data-role="sim-interval">
+            <span style="font-size: 11px; color: var(--bsh-text-muted);">心跳(s)</span>
+          </div>
+          <label style="display: flex; align-items: center; gap: 8px; margin-top: 10px; font-size: 11px; color: var(--bsh-text-muted);">
+            <input type="checkbox" data-role="fast-mode">
+            一键完成模式（高风险）
+          </label>
+          <div class="bsh-actions" style="margin-top: 10px;">
+            <button type="button" class="bsh-btn bsh-btn--primary" data-action="start-sim">开始</button>
+            <button type="button" class="bsh-btn bsh-btn--ghost" data-action="stop-sim" disabled>停止</button>
           </div>
         </div>
       </div>
@@ -1821,17 +2208,25 @@
       shell,
       videoBadge: shell.body.querySelector('[data-role="video-badge"]'),
       autoNextBadge: shell.body.querySelector('[data-role="auto-next-badge"]'),
+      automationBadge: shell.body.querySelector('[data-role="automation-badge"]'),
       status: shell.body.querySelector('[data-role="status"]'),
+      simInfo: shell.body.querySelector('[data-role="sim-info"]'),
       progressFill: shell.body.querySelector('[data-role="progress-fill"]'),
       duration: shell.body.querySelector('[data-role="duration"]'),
       currentTime: shell.body.querySelector('[data-role="current-time"]'),
       resourceTitle: shell.body.querySelector('[data-role="resource-title"]'),
       rateInput: shell.body.querySelector('[data-role="rate-input"]'),
+      simDurationInput: shell.body.querySelector('[data-role="sim-duration"]'),
+      simSpeedInput: shell.body.querySelector('[data-role="sim-speed"]'),
+      simIntervalInput: shell.body.querySelector('[data-role="sim-interval"]'),
+      fastModeInput: shell.body.querySelector('[data-role="fast-mode"]'),
       openLinkButton: shell.body.querySelector('[data-action="open-link"]'),
       copyLinkButton: shell.body.querySelector('[data-action="copy-link"]'),
       toggleAutoNextButton: shell.body.querySelector('[data-action="toggle-auto-next"]'),
       refreshButton: shell.body.querySelector('[data-action="refresh"]'),
       applyRateButton: shell.body.querySelector('[data-action="apply-rate"]'),
+      startSimButton: shell.body.querySelector('[data-action="start-sim"]'),
+      stopSimButton: shell.body.querySelector('[data-action="stop-sim"]'),
       log: shell.body.querySelector('[data-role="log"]'),
       source: shell.body.querySelector('[data-role="source"]'),
       ratePresetButtons: Array.from(ratePresetHost.querySelectorAll("button")),
@@ -1868,6 +2263,34 @@
       applySpocRate(value);
     });
 
+    state.spoc.ui.startSimButton.addEventListener("click", () => {
+      startSpocSimulation();
+    });
+
+    state.spoc.ui.stopSimButton.addEventListener("click", () => {
+      stopSpocSimulation("已手动停止任务。");
+    });
+
+    [state.spoc.ui.simDurationInput, state.spoc.ui.simSpeedInput, state.spoc.ui.simIntervalInput].forEach((input) => {
+      input.addEventListener("change", () => {
+        syncSpocAutomationConfigFromUi();
+        renderSpocUi();
+      });
+    });
+
+    state.spoc.ui.fastModeInput.addEventListener("change", () => {
+      syncSpocAutomationConfigFromUi();
+      renderSpocUi();
+      if (state.spoc.fastMode) {
+        pushSpocLog("已开启一键完成模式。", "warning");
+      } else {
+        pushSpocLog("已关闭一键完成模式。", "info");
+      }
+    });
+
+    syncSpocAutomationConfigFromUi();
+    installSpocRequestInterceptor();
+
     pushSpocLog("播放器辅助已加载，正在检测当前页面视频。", "success");
     refreshSpocState();
     startSpocRateEnforcer();
@@ -1894,9 +2317,18 @@
     if (!ui) return;
 
     const video = state.spoc.currentVideo;
-    const duration = state.spoc.currentDuration;
-    const currentTime = video?.currentTime || 0;
-    const progress = duration > 0 ? Math.min(100, Math.floor((currentTime / duration) * 100)) : 0;
+    const realDuration = state.spoc.currentDuration;
+    const realCurrentTime = video?.currentTime || 0;
+    const realProgress = realDuration > 0 ? Math.min(100, Math.floor((realCurrentTime / realDuration) * 100)) : 0;
+
+    const running = state.spoc.isRunning;
+    const displayDuration = running ? Math.max(state.spoc.simDuration || 0, realDuration || 0) : realDuration;
+    const displayCurrentTime = running ? state.spoc.simPlayTime : realCurrentTime;
+    const displayProgress = running ? state.spoc.simProgress : realProgress;
+
+    const hasParams = Boolean(state.spoc.params?.kcid && state.spoc.params?.kcnrid && state.spoc.params?.ssmlid);
+    const hasToken = Boolean(getSpocHeaderValue("Token"));
+    const automationReady = hasParams && hasToken;
 
     updateBadge(ui.videoBadge, Boolean(video), video ? "播放器已就绪" : "播放器未就绪");
     updateBadge(
@@ -1906,19 +2338,41 @@
       !state.spoc.autoNextEnabled
     );
 
-    ui.status.textContent = video
-      ? "已检测到视频播放器，可使用倍速、自动下一节和链接工具。"
-      : "当前页面尚未检测到可用播放器，请打开具体视频后再试。";
+    if (ui.automationBadge) {
+      if (running) {
+        updateBadge(ui.automationBadge, true, "自动上报运行中");
+      } else if (automationReady) {
+        updateBadge(ui.automationBadge, true, "自动上报已就绪");
+      } else {
+        updateBadge(ui.automationBadge, false, "自动上报未就绪", true);
+      }
+    }
 
-    ui.progressFill.style.width = `${progress}%`;
-    ui.progressFill.textContent = `${progress}%`;
-    ui.duration.textContent = duration > 0 ? formatDurationLabel(duration) : "待检测";
-    ui.currentTime.textContent = formatClockTime(currentTime);
+    if (running) {
+      ui.status.textContent = state.spoc.simStatusText || "正在模拟上报进度...";
+    } else {
+      ui.status.textContent = video
+        ? "已检测到视频播放器，可使用倍速、自动下一节和链接工具。"
+        : "当前页面尚未检测到可用播放器，请打开具体视频后再试。";
+    }
+
+    if (ui.simInfo) {
+      ui.simInfo.textContent =
+        state.spoc.simInfoText ||
+        (automationReady ? "参数和认证头已捕获，可开始自动上报。" : "请点击一次“查看”以捕获参数和认证头。");
+    }
+
+    ui.progressFill.style.width = `${Math.max(0, Math.min(100, displayProgress))}%`;
+    ui.progressFill.textContent = `${Math.max(0, Math.min(100, displayProgress))}%`;
+    ui.duration.textContent = displayDuration > 0 ? formatDurationLabel(displayDuration) : "待检测";
+    ui.currentTime.textContent = formatClockTime(displayCurrentTime);
     ui.resourceTitle.textContent = state.spoc.currentResourceTitle || "待识别";
     ui.source.textContent = state.spoc.currentSrc || "尚未读取到视频地址。";
     ui.openLinkButton.disabled = !state.spoc.currentSrc;
     ui.copyLinkButton.disabled = !state.spoc.currentSrc;
     ui.toggleAutoNextButton.textContent = state.spoc.autoNextEnabled ? "关闭自动下一节" : "开启自动下一节";
+    ui.startSimButton.disabled = running || !automationReady;
+    ui.stopSimButton.disabled = !running;
 
     ui.ratePresetButtons.forEach((button) => {
       const rate = Number(button.dataset.rate || 1);
@@ -1927,6 +2381,12 @@
     });
 
     ui.rateInput.value = String(state.spoc.preferredRate);
+    ui.simSpeedInput.value = String(state.spoc.simSpeed);
+    ui.simIntervalInput.value = String(state.spoc.simInterval);
+    if (state.spoc.simDuration > 0) {
+      ui.simDurationInput.value = String(Math.floor(state.spoc.simDuration));
+    }
+    ui.fastModeInput.checked = Boolean(state.spoc.fastMode);
     renderSpocLog();
   }
 
@@ -2305,3 +2765,4 @@
     return binl2hex(coreMd5(str2binl(text), text.length * chrsz));
   }
 })();
+
