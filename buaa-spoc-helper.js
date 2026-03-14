@@ -1164,7 +1164,7 @@
             }
           </style>
         </head>
-        <body>
+        <body tabindex="-1">
           <div class="loading-mask" id="loading-mask">
             <div class="loading-mask__title">正在准备 PPT 讲义</div>
             <div class="loading-mask__desc" id="loading-text">正在预加载图片，稍后会自动唤起打印。</div>
@@ -1655,6 +1655,18 @@
               font-size: 12px;
               word-break: break-all;
             }
+            .shortcut-hint {
+              position: fixed;
+              bottom: 24px;
+              right: 24px;
+              padding: 10px 16px;
+              border-radius: 12px;
+              background: rgba(255,255,255,0.08);
+              border: 1px solid rgba(255,255,255,0.12);
+              font-size: 13px;
+              color: rgba(248,250,252,0.6);
+              pointer-events: none;
+            }
           </style>
         </head>
         <body>
@@ -1670,6 +1682,64 @@
               `
             )
             .join("")}
+          <div class="shortcut-hint">快捷键：← 后退 10s | → 快进 10s</div>
+          <script>
+            (function () {
+              let activeVideo = null;
+
+              const pickVideo = () => {
+                const videos = Array.from(document.querySelectorAll('video'));
+                if (!videos.length) return null;
+                if (activeVideo && videos.includes(activeVideo)) return activeVideo;
+                return videos.find((v) => !v.paused) || videos[0];
+              };
+
+              const seekBy = (offset) => {
+                const video = pickVideo();
+                if (!video) return;
+                const maxDuration = Number.isFinite(video.duration) ? video.duration : Number.MAX_SAFE_INTEGER;
+                const next = Math.max(0, Math.min(maxDuration, (video.currentTime || 0) + offset));
+                video.currentTime = next;
+              };
+
+              document.querySelectorAll('video').forEach((video) => {
+                video.addEventListener('pointerdown', () => {
+                  activeVideo = video;
+                });
+                video.addEventListener('play', () => {
+                  activeVideo = video;
+                });
+              });
+
+              const onKeyDown = (event) => {
+                const tag = (event.target && event.target.tagName) ? event.target.tagName.toUpperCase() : '';
+                if (tag === 'INPUT' || tag === 'TEXTAREA' || (event.target && event.target.isContentEditable)) {
+                  return;
+                }
+
+                if (event.key === 'ArrowRight') {
+                  event.preventDefault();
+                  event.stopPropagation();
+                  seekBy(10);
+                } else if (event.key === 'ArrowLeft') {
+                  event.preventDefault();
+                  event.stopPropagation();
+                  seekBy(-10);
+                }
+              };
+
+              document.addEventListener('keydown', onKeyDown, true);
+              window.addEventListener('keydown', onKeyDown, true);
+
+              window.addEventListener('load', () => {
+                try {
+                  document.body.focus();
+                } catch (error) {
+                  // ignore
+                }
+              });
+            })();
+          </script>
         </body>
       </html>
     `;
@@ -2765,4 +2835,3 @@
     return binl2hex(coreMd5(str2binl(text), text.length * chrsz));
   }
 })();
-
