@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         智学北航学习助手
 // @namespace    https://github.com/peter-erer/buaa-spoc-helper
-// @version      5.1.0
+// @version      5.1.1
 // @description  支持 MSA 回放字幕/PPT 导出、课程详情视频/PPTX 下载，以及 SPOC 播放器辅助工具
 // @author       micraow(github.com/micraow),Peter-erer(github.com/peter-erer)
 // @license      MIT
@@ -854,7 +854,7 @@
           <ul class="bsh-hints">
             <li>导出字幕或笔记前，请先点开页面内的语音/字幕相关标签。</li>
             <li>导出 PPT 讲义前，请先点开页面内的 PPT 标签以触发数据请求。</li>
-            <li>PPT 导出会打开打印页，浏览器允许弹窗后可另存为 PDF。</li>
+            <li>PPT 导出会打开默认横向的打印页，浏览器允许弹窗后可另存为 PDF。</li>
             <li>如需进入课程下载页，可使用上方的“当前课程下载页”或“打开课程中心”按钮。</li>
             <li>如需搜索全校课程并进入可下载视频的课程详情页，可打开课程中心：<a href="https://classroom.msa.buaa.edu.cn/courseCenter" target="_blank" rel="noopener noreferrer">classroom.msa.buaa.edu.cn/courseCenter</a></li>
           </ul>
@@ -1033,7 +1033,7 @@
       .map((slide, index) => {
         try {
           const content = slide.content ? JSON.parse(slide.content) : {};
-          const imageUrl = content.pptimgurl;
+          const imageUrl = content.pptimgurl || content.pptImgUrl || content.imageUrl || content.url || "";
           if (!imageUrl) return null;
           const timeText = formatClockTime(Number(slide.created_sec || slide.BeginSec || 0));
           return { imageUrl, index: index + 1, timeText };
@@ -1043,18 +1043,20 @@
       })
       .filter(Boolean);
 
-    const title = escapeHtml(document.title);
+    if (!slides.length) {
+      window.alert("PPT 数据里没有找到可导出的图片地址。");
+      return;
+    }
+
+    const title = escapeHtml(document.title || "PPT 讲义");
     const generatedAt = escapeHtml(new Date().toLocaleString("zh-CN"));
 
     const slidesMarkup = slides
       .map(
         (slide) => `
-          <section class="slide-card">
+          <section class="slide-page">
             <img class="ppt-image" src="${escapeHtml(slide.imageUrl)}" alt="第 ${slide.index} 页">
-            <div class="slide-meta">
-              <span>第 ${slide.index} 页</span>
-              <span>对应时间：${escapeHtml(slide.timeText)}</span>
-            </div>
+            <div class="slide-meta">第 ${slide.index} 页 · ${escapeHtml(slide.timeText)}</div>
           </section>
         `
       )
@@ -1064,153 +1066,218 @@
       <html lang="zh-CN">
         <head>
           <meta charset="UTF-8">
-          <title>${title} - PPT 讲义</title>
+          <title>${title} - 横版 PDF</title>
           <style>
             * { box-sizing: border-box; }
-            body {
+
+            html, body {
               margin: 0;
-              padding: 24px;
-              background: #eef3fb;
-              font-family: "Segoe UI", "PingFang SC", "Microsoft YaHei", sans-serif;
+              min-height: 100%;
+              background: #eef2f7;
               color: #0f172a;
+              font-family: "Segoe UI", "PingFang SC", "Microsoft YaHei", sans-serif;
             }
+
+            .toolbar {
+              position: sticky;
+              top: 0;
+              z-index: 10;
+              display: flex;
+              flex-wrap: wrap;
+              align-items: center;
+              justify-content: space-between;
+              gap: 12px;
+              padding: 14px 18px;
+              background: rgba(255,255,255,0.96);
+              border-bottom: 1px solid rgba(148, 163, 184, 0.35);
+              backdrop-filter: blur(10px);
+            }
+
+            .toolbar strong { display: block; font-size: 15px; }
+            .toolbar span { display: block; margin-top: 3px; color: #475569; font-size: 12px; }
+
+            .toolbar button {
+              border: 0;
+              border-radius: 10px;
+              padding: 9px 14px;
+              background: #2563eb;
+              color: white;
+              cursor: pointer;
+            }
+
+            .toolbar .tip {
+              flex-basis: 100%;
+              color: #64748b;
+              font-size: 12px;
+            }
+
             .loading-mask {
               position: fixed;
               inset: 0;
+              z-index: 9999;
               display: flex;
               flex-direction: column;
               align-items: center;
               justify-content: center;
               gap: 10px;
-              background: rgba(255,255,255,0.94);
-              z-index: 9999;
+              background: rgba(255,255,255,0.96);
             }
+
             .loading-mask__title { font-size: 24px; font-weight: 700; color: #1d4ed8; }
             .loading-mask__desc { font-size: 14px; color: #475569; }
-            .doc-header {
-              max-width: 1024px;
-              margin: 0 auto 20px;
-              padding: 20px 22px;
-              border-radius: 18px;
-              background: white;
-              box-shadow: 0 14px 34px rgba(15, 23, 42, 0.08);
-            }
-            .doc-header h1 { margin: 0 0 8px; font-size: 28px; }
-            .doc-header p { margin: 6px 0 0; color: #475569; font-size: 14px; }
-            .hint {
-              margin-top: 10px;
-              padding: 10px 12px;
-              border-radius: 12px;
-              background: #eff6ff;
-              color: #1d4ed8;
-              font-size: 13px;
-            }
-            .slide-card {
-              width: min(1024px, 100%);
-              margin: 0 auto 24px;
+
+            .slide-page {
+              position: relative;
+              width: min(1280px, calc(100vw - 48px));
+              aspect-ratio: 16 / 9;
+              margin: 24px auto;
+              display: flex;
+              align-items: center;
+              justify-content: center;
               overflow: hidden;
-              border-radius: 18px;
-              border: 1px solid rgba(148, 163, 184, 0.28);
               background: white;
-              box-shadow: 0 12px 30px rgba(15, 23, 42, 0.06);
+              box-shadow: 0 18px 42px rgba(15, 23, 42, 0.12);
             }
+
             .ppt-image {
               display: block;
               width: 100%;
+              height: 100%;
+              object-fit: contain;
               background: white;
+              image-rendering: auto;
             }
+
             .slide-meta {
-              display: flex;
-              justify-content: space-between;
-              gap: 12px;
-              padding: 12px 16px;
-              color: #475569;
-              font-size: 13px;
-              border-top: 1px solid rgba(148, 163, 184, 0.22);
+              position: absolute;
+              right: 10px;
+              bottom: 8px;
+              padding: 4px 7px;
+              border-radius: 999px;
+              background: rgba(15, 23, 42, 0.68);
+              color: white;
+              font-size: 11px;
             }
+
             @media print {
-              @page { margin: 1cm; }
-              body { background: white; padding: 0; }
-              .loading-mask, .hint { display: none !important; }
-              .doc-header {
-                padding: 0 0 12px;
-                border-radius: 0;
-                box-shadow: none;
-                border-bottom: 2px solid #334155;
-              }
-              .doc-header h1 { font-size: 18pt; }
-              .doc-header p { font-size: 10pt; }
-              .slide-card {
-                width: 100%;
+              @page {
+                size: A4 landscape;
                 margin: 0;
-                border-radius: 0;
-                box-shadow: none;
+              }
+
+              html, body {
+                width: 297mm;
+                height: 210mm;
+                margin: 0 !important;
+                padding: 0 !important;
+                background: white !important;
+              }
+
+              .toolbar, .loading-mask, .slide-meta {
+                display: none !important;
+              }
+
+              .slide-page {
+                width: 297mm;
+                height: 210mm;
+                margin: 0 !important;
+                padding: 0 !important;
+                box-shadow: none !important;
+                break-after: page;
                 page-break-after: always;
-                border: 1px solid #94a3b8;
-              }
-              .ppt-image {
-                max-width: 100%;
-                max-height: 82vh;
-                width: auto;
-                margin: 0 auto;
-              }
-              .slide-meta {
-                font-size: 10pt;
-                color: #334155;
-                background: #f8fafc !important;
+                overflow: hidden;
                 -webkit-print-color-adjust: exact;
                 print-color-adjust: exact;
+              }
+
+              .slide-page:last-child {
+                break-after: auto;
+                page-break-after: auto;
+              }
+
+              .ppt-image {
+                width: 100% !important;
+                height: 100% !important;
+                max-width: none !important;
+                max-height: none !important;
+                object-fit: contain !important;
               }
             }
           </style>
         </head>
         <body>
           <div class="loading-mask" id="loading-mask">
-            <div class="loading-mask__title">正在准备 PPT 讲义</div>
-            <div class="loading-mask__desc" id="loading-text">正在预加载图片，稍后会自动唤起打印。</div>
+            <div class="loading-mask__title">正在准备横版 PDF</div>
+            <div class="loading-mask__desc" id="loading-text">正在预加载原始 PPT 图片，稍后会自动唤起打印。</div>
           </div>
 
-          <header class="doc-header">
-            <h1>${title}</h1>
-            <p>生成时间：${generatedAt}</p>
-            <p>导出方式：浏览器打印页，可在打印窗口中选择“另存为 PDF”。</p>
-            <div class="hint">建议在打印设置中手动选择横向布局，以获得更舒适的讲义排版。</div>
-          </header>
+          <div class="toolbar">
+            <div>
+              <strong>${title}</strong>
+              <span>共 ${slides.length} 页 · 生成时间：${generatedAt}</span>
+            </div>
+            <button type="button" onclick="window.print()">重新打印 / 保存 PDF</button>
+            <div class="tip">打印页会默认请求 A4 横向无边距页面；若浏览器忽略页面 CSS，可在打印设置中确认“横向 / 无边距 / 背景图形”。</div>
+          </div>
 
-          ${slidesMarkup || '<div class="doc-header"><p>未找到可导出的 PPT 图片。</p></div>'}
+          ${slidesMarkup}
 
           <script>
             window.onload = function () {
-              const images = document.querySelectorAll('.ppt-image');
+              const images = Array.from(document.querySelectorAll('.ppt-image'));
               const loadingText = document.getElementById('loading-text');
               const mask = document.getElementById('loading-mask');
               let loaded = 0;
               const total = images.length;
 
-              function step() {
+              function markProgress() {
                 loaded += 1;
                 loadingText.textContent = '正在预加载图片（' + loaded + '/' + total + '）';
-                if (loaded >= total) {
-                  loadingText.textContent = '资源准备完成，正在唤起打印。';
-                  setTimeout(function () {
-                    mask.style.display = 'none';
-                    window.print();
-                  }, 450);
-                }
+              }
+
+              function waitImage(image) {
+                return new Promise(function (resolve) {
+                  let done = false;
+
+                  function finish() {
+                    if (done) return;
+                    done = true;
+                    markProgress();
+                    resolve();
+                  }
+
+                  if (image.complete) {
+                    if (image.naturalWidth > 0 && image.decode) {
+                      image.decode().then(finish).catch(finish);
+                    } else {
+                      finish();
+                    }
+                    return;
+                  }
+
+                  image.onload = function () {
+                    if (image.decode) {
+                      image.decode().then(finish).catch(finish);
+                    } else {
+                      finish();
+                    }
+                  };
+
+                  image.onerror = finish;
+                });
               }
 
               if (total === 0) {
-                step();
+                mask.style.display = 'none';
                 return;
               }
 
-              images.forEach(function (image) {
-                if (image.complete) {
-                  step();
-                } else {
-                  image.onload = step;
-                  image.onerror = step;
-                }
+              Promise.all(images.map(waitImage)).then(function () {
+                loadingText.textContent = '资源准备完成，正在唤起打印。';
+                setTimeout(function () {
+                  mask.style.display = 'none';
+                  window.print();
+                }, 300);
               });
             };
           <\/script>
@@ -1220,7 +1287,7 @@
 
     const popup = openHtmlInPopup(html);
     if (!popup) {
-      window.alert("浏览器拦截了弹窗。请允许当前站点弹窗后，再尝试导出 PPT 讲义。");
+      window.alert("浏览器拦截了弹窗。请允许当前站点弹窗后，再尝试导出横版 PDF。");
     }
   }
 
@@ -2765,4 +2832,3 @@
     return binl2hex(coreMd5(str2binl(text), text.length * chrsz));
   }
 })();
-
