@@ -194,7 +194,7 @@
 
   // ===== PPT 图片增强：调亮 / 去黄 / 锐化 =====
   async function enhancePptImage(url, opts = {}) {
-    const { brightness = 1.18, yellowFix = 0.03, sharpness = 0.6, quality = 0.92 } = opts;
+    const { brightness = 1.18, yellowFix = 0.03, sharpness = 0.4, quality = 0.92 } = opts;
 
     const img = await loadImageCrossOrigin(url);
     const w = img.naturalWidth;
