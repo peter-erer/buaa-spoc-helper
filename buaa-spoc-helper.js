@@ -1164,7 +1164,7 @@
             }
           </style>
         </head>
-        <body tabindex="-1">
+        <body>
           <div class="loading-mask" id="loading-mask">
             <div class="loading-mask__title">正在准备 PPT 讲义</div>
             <div class="loading-mask__desc" id="loading-text">正在预加载图片，稍后会自动唤起打印。</div>
