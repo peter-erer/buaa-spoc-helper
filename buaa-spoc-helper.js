@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         智学北航学习助手
 // @namespace    https://github.com/peter-erer/buaa-spoc-helper
-// @version      5.1.1
+// @version      5.2.0
 // @description  支持 MSA 回放字幕/PPT 导出、课程详情视频/PPTX 下载，以及 SPOC 播放器辅助工具
 // @author       micraow(github.com/micraow),Peter-erer(github.com/peter-erer)
 // @license      MIT
@@ -190,6 +190,110 @@
     const minutes = Math.floor(safe / 60);
     const secs = safe % 60;
     return `${minutes}分 ${secs.toString().padStart(2, "0")}秒`;
+  }
+
+  async function enhancePptImage(url, options = {}) {
+    const {
+      brightness = 1.18,
+      yellowFix = 0.03,
+      sharpness = 0.25,
+      quality = 0.92,
+      maxDimension = 2560,
+    } = options;
+    const image = await loadImageCrossOrigin(url);
+    const naturalWidth = image.naturalWidth;
+    const naturalHeight = image.naturalHeight;
+    if (!naturalWidth || !naturalHeight) return url;
+
+    const scale = Math.min(1, maxDimension / Math.max(naturalWidth, naturalHeight));
+    const width = Math.max(1, Math.round(naturalWidth * scale));
+    const height = Math.max(1, Math.round(naturalHeight * scale));
+    const canvas = document.createElement("canvas");
+    canvas.width = width;
+    canvas.height = height;
+
+    const context = canvas.getContext("2d", { willReadFrequently: true });
+    if (!context) throw new Error("浏览器无法创建图片处理画布。");
+    context.drawImage(image, 0, 0, width, height);
+
+    const imageData = context.getImageData(0, 0, width, height);
+    const data = imageData.data;
+    const redGain = brightness * (1 - yellowFix * 0.5);
+    const greenGain = brightness * (1 - yellowFix * 0.25);
+    const blueGain = brightness * (1 + yellowFix);
+
+    for (let index = 0; index < data.length; index += 4) {
+      data[index] = clamp255(data[index] * redGain);
+      data[index + 1] = clamp255(data[index + 1] * greenGain);
+      data[index + 2] = clamp255(data[index + 2] * blueGain);
+    }
+
+    if (sharpness > 0) {
+      applySharpen(imageData, width, height, sharpness);
+    }
+
+    context.putImageData(imageData, 0, 0);
+    return canvas.toDataURL("image/jpeg", quality);
+  }
+
+  function clamp255(value) {
+    return value < 0 ? 0 : value > 255 ? 255 : Math.round(value);
+  }
+
+  function loadImageCrossOrigin(url) {
+    return new Promise((resolve, reject) => {
+      const image = new Image();
+      let settled = false;
+      const finish = (callback, value) => {
+        if (settled) return;
+        settled = true;
+        clearTimeout(timeoutId);
+        callback(value);
+      };
+      const timeoutId = window.setTimeout(
+        () => finish(reject, new Error("图片加载超时")),
+        15000
+      );
+
+      image.crossOrigin = "anonymous";
+      image.onload = () => finish(resolve, image);
+      image.onerror = () => finish(reject, new Error(`图片加载失败: ${url}`));
+      image.src = url;
+    });
+  }
+
+  function applySharpen(imageData, width, height, strength) {
+    const source = new Uint8ClampedArray(imageData.data);
+    const target = imageData.data;
+    const kernel = [0, -strength, 0, -strength, 1 + 4 * strength, -strength, 0, -strength, 0];
+
+    for (let y = 1; y < height - 1; y += 1) {
+      for (let x = 1; x < width - 1; x += 1) {
+        const targetIndex = (y * width + x) * 4;
+        for (let channel = 0; channel < 3; channel += 1) {
+          let sum = 0;
+          let kernelIndex = 0;
+          for (let offsetY = -1; offsetY <= 1; offsetY += 1) {
+            for (let offsetX = -1; offsetX <= 1; offsetX += 1) {
+              sum +=
+                source[((y + offsetY) * width + (x + offsetX)) * 4 + channel] *
+                kernel[kernelIndex];
+              kernelIndex += 1;
+            }
+          }
+          target[targetIndex + channel] = clamp255(sum);
+        }
+      }
+    }
+  }
+
+  function confirmLargePptEnhancement(count) {
+    return (
+      count <= 50 ||
+      window.confirm(
+        `当前共有 ${count} 页，图片增强会增加处理时间和内存占用，是否继续？`
+      )
+    );
   }
 
   function downloadTextFile(content, fileName) {
@@ -555,6 +659,27 @@
         gap: 8px;
       }
 
+      .bsh-toggle-row {
+        display: flex;
+        align-items: center;
+        gap: 7px;
+        margin-top: 10px;
+        color: var(--bsh-text-muted);
+        font-size: 11px;
+        line-height: 1.4;
+        cursor: pointer;
+      }
+
+      .bsh-toggle-row input {
+        margin: 0;
+        accent-color: var(--bsh-primary);
+      }
+
+      .bsh-toolbar .bsh-toggle-row {
+        margin-top: 0;
+        color: rgba(20, 32, 64, 0.72);
+      }
+
       .bsh-btn {
         appearance: none;
         border: 1px solid transparent;
@@ -848,6 +973,10 @@
           <button type="button" class="bsh-btn bsh-btn--ghost" data-action="course-detail">当前课程下载页</button>
           <button type="button" class="bsh-btn bsh-btn--ghost" data-action="course-center">打开课程中心</button>
         </div>
+        <label class="bsh-toggle-row">
+          <input type="checkbox" data-role="enhance-toggle">
+          导出时增强图片（调亮 / 去黄 / 锐化）
+        </label>
       </div>
       <div class="bsh-section">
         <div class="bsh-card">
@@ -872,6 +1001,7 @@
       txtButton: shell.body.querySelector('[data-action="txt"]'),
       courseDetailButton: shell.body.querySelector('[data-action="course-detail"]'),
       courseCenterButton: shell.body.querySelector('[data-action="course-center"]'),
+      enhanceCheckbox: shell.body.querySelector('[data-role="enhance-toggle"]'),
     };
 
     state.livingroom.ui.pptButton.addEventListener("click", exportLivingroomPpt);
@@ -1022,7 +1152,7 @@
     downloadTextFile(content, fileName);
   }
 
-  function exportLivingroomPpt() {
+  async function exportLivingroomPpt() {
     const pptData = Array.isArray(state.livingroom.pptData) ? state.livingroom.pptData : [];
     if (!pptData.length) {
       window.alert("还没有捕获到 PPT 数据，请先点击页面里的 PPT 标签。");
@@ -1046,6 +1176,28 @@
     if (!slides.length) {
       window.alert("PPT 数据里没有找到可导出的图片地址。");
       return;
+    }
+
+    const enhanceEnabled = state.livingroom.ui?.enhanceCheckbox?.checked ?? false;
+    if (enhanceEnabled && confirmLargePptEnhancement(slides.length)) {
+      setBusy(state.livingroom.ui?.pptButton, true, "图片增强中");
+      try {
+        for (let index = 0; index < slides.length; index += 1) {
+          if (state.livingroom.ui?.status) {
+            state.livingroom.ui.status.textContent =
+              `正在增强 PPT 图片（${index + 1}/${slides.length}）…`;
+          }
+          try {
+            slides[index].imageUrl = await enhancePptImage(slides[index].imageUrl);
+          } catch (error) {
+            console.warn(`[BUAA Helper] 第 ${slides[index].index} 页图片增强失败，使用原图`, error);
+          }
+          await sleep(0);
+        }
+      } finally {
+        setBusy(state.livingroom.ui?.pptButton, false);
+        updateLivingroomUi();
+      }
     }
 
     const title = escapeHtml(document.title || "PPT 讲义");
@@ -1352,6 +1504,10 @@
         <button type="button" class="bsh-btn bsh-btn--primary" data-action="all-video" disabled>下载全部视频</button>
         <button type="button" class="bsh-btn" data-action="all-ppt" disabled>下载全部 PPT</button>
       </div>
+      <label class="bsh-toggle-row">
+        <input type="checkbox" data-role="enhance-toggle">
+        PPT 图片增强
+      </label>
       <div class="bsh-toolbar__status" data-role="status">正在准备课程详情工具…</div>
     `;
 
@@ -1364,6 +1520,7 @@
       status: toolbar.querySelector('[data-role="status"]'),
       allVideoButton: toolbar.querySelector('[data-action="all-video"]'),
       allPptButton: toolbar.querySelector('[data-action="all-ppt"]'),
+      enhanceCheckbox: toolbar.querySelector('[data-role="enhance-toggle"]'),
     };
 
     applyCourseButtonStyle(state.courseDetail.ui.allVideoButton, { primary: true, disabled: true });
@@ -1842,6 +1999,23 @@
         return;
       }
 
+      const enhanceEnabled = state.courseDetail.ui?.enhanceCheckbox?.checked ?? false;
+      if (enhanceEnabled && confirmLargePptEnhancement(imageUrls.length)) {
+        for (let index = 0; index < imageUrls.length; index += 1) {
+          updateCourseToolbarStatus(
+            `正在增强 PPT 图片（${index + 1}/${imageUrls.length}）…`,
+            "info"
+          );
+          try {
+            imageUrls[index] = await enhancePptImage(imageUrls[index]);
+          } catch (error) {
+            console.warn(`[BUAA Helper] 第 ${index + 1} 页图片增强失败，使用原图`, error);
+          }
+          await sleep(0);
+        }
+        updateCourseToolbarStatus("图片增强完成，正在生成 PPTX…", "info");
+      }
+
       if (typeof PptxGenJS !== "function") {
         throw new Error("PptxGenJS 未加载成功。");
       }
@@ -1855,7 +2029,9 @@
       ppt.layout = "LAYOUT_16x9";
       imageUrls.forEach((imageUrl) => {
         const slide = ppt.addSlide();
-        slide.background = { path: imageUrl };
+        slide.background = imageUrl.startsWith("data:")
+          ? { data: imageUrl }
+          : { path: imageUrl };
       });
       await ppt.writeFile({ fileName: `${title}.pptx` });
       updateCourseToolbarStatus(`${title}.pptx 导出完成。`, "success");
